@@ -40,7 +40,7 @@ function getRekLabels (event) {
 }
 
 
-function insertQuery(dbconn,labels){
+function insertQuery(dbconn){
     return new Promise(function(resolve,reject){
         var info = {
                         description: "some image description",
@@ -53,25 +53,13 @@ function insertQuery(dbconn,labels){
                 reject(err);
             }
             else{
-                resolve(labels);
+                resolve();
             }
         });
     });
 }
 
-function selectQuery(dbconn, key,labels){
-    return new Promise(function(resolve,reject){
-        dbconn.query('SELECT `object_key`,`labels` FROM photo WHERE object_key = ?',[key], function(err, results, fields){
-            if(err){
-                dbconn.destroy();
-                reject(err);
-            }
-            else{
-                resolve(labels);
-            }
-        });
-    });
-}
+
 
 function updateQuery(dbconn, key, labels){
     return new Promise(function(resolve,reject){
@@ -109,7 +97,6 @@ exports.handler = (event, context, callback) => {
         port: process.env.DATABASE_PORT, 
         database: process.env.DATABASE_DB_NAME,
     });
-     
     var getObjectPromise = s3.getObject(params).promise();
     getObjectPromise
     .then(function(data){
@@ -117,12 +104,9 @@ exports.handler = (event, context, callback) => {
         console.log(`Content Type:`, data.ContentType);
         console.log(`Event received. Bucket: ${bucket}, Key: ${key}.`);
         
+        return insertQuery(conn);
+    }).then(function(){
         return getRekLabels(params);
-        
-    }).then(function(labels){
-        return insertQuery(conn,labels);
-    }).then(function(labels){
-        return selectQuery(conn,key,labels);
     }).then(function(labels){
         return updateQuery(conn,key,labels);
     }).then(function(){
@@ -131,6 +115,4 @@ exports.handler = (event, context, callback) => {
         callback(err.message);
     });
         
-      
-
 };
