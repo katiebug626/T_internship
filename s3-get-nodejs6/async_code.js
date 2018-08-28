@@ -1,5 +1,5 @@
 const aws = require('aws-sdk');
-var mysql = require('mysql');
+var mysql = require('mysql2/promise');
 var rekognition = new aws.Rekognition();
 let s3 = new aws.S3({ apiVersion: '2006-03-01' });
 aws.config.apiVersions = {
@@ -9,56 +9,7 @@ aws.config.apiVersions = {
 
 aws.config.update({region:'us-west-2'});
 
-function insertQuery(dbconn){
-    return new Promise(function(resolve,reject){
-        var info = {
-                        description: "some image description",
-                        object_key: "",
-                        labels: "labels pending"
-                    };
-        dbconn.query('INSERT INTO photo SET ?', info , function(err, reuslts, fields){
-            if(err){
-                dbconn.destroy();
-                reject(err);
-            }
-            else{
-                resolve();
-            }
-        });
-    });
-}
-
-function selectQuery(dbconn, key){
-    return new Promise(function(resolve,reject){
-        dbconn.query('SELECT `object_key`,`labels` FROM photo WHERE object_key = ?',[key], function(err, results, fields){
-            if(err){
-                dbconn.destroy();
-                reject(err);
-            }
-            else{
-                resolve();
-            }
-        });
-    });
-}
-
-function updateQuery(dbconn, key,labels){
-    return new Promise(function(resolve,reject){
-        console.log(`Updating key: ${key} with labels: ${labels}`);
-        dbconn.query('UPDATE photo SET labels = ? WHERE object_key = ?', [labels,key], function(err, reuslts, fields){
-            if(err){
-                dbconn.destroy();
-                reject(err);
-            }
-            else{
-                dbconn.end();
-                resolve();
-            }
-        });
-    });
-}
-
-exports.handler = async (event, context, callback) =>{
+exports.handler = async (event, context) =>{
     
     //console.log('Received event:', JSON.stringify(event, null, 2));
 
@@ -69,17 +20,25 @@ exports.handler = async (event, context, callback) =>{
         Bucket: bucket,
         Key: key,
     };
-    
-    //connects to DB instance 
-    var conn = mysql.createConnection({
-        host: process.env.DATABASE_HOST,
-        user: process.env.DATABASE_USER,
-        password: process.env.DATABASE_PASSWORD,
-        port: process.env.DATABASE_PORT, 
-        database: process.env.DATABASE_DB_NAME,
-    });
-    
+
     try{
+        //establishes connection to database
+        const conn = await mysql.createConnection({
+            host: process.env.DATABASE_HOST,
+            user: process.env.DATABASE_USER,
+            password: process.env.DATABASE_PASSWORD,
+            port: process.env.DATABASE_PORT, 
+            database: process.env.DATABASE_DB_NAME,
+        });
+        
+        var info = {
+            description: "some image description",
+            object_key: "",
+            labels: "labels pending"
+        };
+                    
+        await conn.query('INSERT INTO photo SET ?', info);
+        
         //gets s3 object
         const data = await s3.getObject(params).promise();
         
@@ -97,6 +56,7 @@ exports.handler = async (event, context, callback) =>{
             MinConfidence: 50
         };
         
+        //get rekognition labels of s3 object
         const results = await rekognition.detectLabels(param).promise();
         
         //compiles labels in a single array and converts into a string
@@ -108,18 +68,15 @@ exports.handler = async (event, context, callback) =>{
         }
         var csv_labels = all_labels.join();
         
-        await insertQuery(conn);
+        await conn.query('SELECT `object_key` FROM photo WHERE object_key = ?', key);
         
-        await selectQuery(conn,key);
-        
-        await updateQuery(conn,key, csv_labels);
-        
-        callback(null,"Finished");
-        
+        console.log(`Updating key: ${key} with labels: ${csv_labels}`);
+        await conn.query('UPDATE photo SET labels = ? WHERE object_key = ?', [csv_labels,key]);
+       
+        return "Finished";
     }
     catch(err){
-        callback(err.message);
-        
+        return err.message;
     }
 
 };
